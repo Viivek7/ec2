@@ -1,0 +1,140 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Parameters:
+  InstanceType:
+    Type: String
+    Default: t2.micro
+    Description: EC2 instance type
+
+Resources:
+  MyInstanceRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: MyInstanceRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeDeployPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "codedeploy:PutLifecycleEventHookExecutionStatus"
+                  - "codedeploy:CreateDeployment"
+                  - "codedeploy:GetDeployment"
+                  - "codedeploy:RegisterApplicationRevision"
+                Resource: "*"
+        - PolicyName: SSMManagedInstancePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "ssm:UpdateInstanceInformation"
+                  - "ssm:ListInstanceAssociations"
+                  - "ssm:ListAssociations"
+                Resource: "*"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforAWSCodeDeploy"
+        - "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+
+  MyInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      InstanceProfileName: MyInstanceProfile
+      Roles:
+        - !Ref MyInstanceRole
+
+  MyInstance:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: ami-079db87dc4c10ac91
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          yum update -y
+          yum install -y ruby
+          yum install -y wget
+          cd /home/ec2-user
+          wget https://aws-codedeploy-us-east-1.s3.amazonaws.com/latest/install
+          chmod +x ./install
+          ./install auto
+          yum install -y httpd
+          systemctl start httpd
+          systemctl enable httpd
+      SecurityGroupIds:
+        - !Ref MySecurityGroup
+      IamInstanceProfile: !Ref MyInstanceProfile
+      Tags:
+        - Key: "Project"
+          Value: "Training"
+        - Key: "Training"
+          Value: "CodeDeploySample"
+
+  MySecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "Enable SSH and HTTP access"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  MyCodeDeployApp:
+    Type: "AWS::CodeDeploy::Application"
+    Properties:
+      ApplicationName: MyCodeDeployApp
+
+  MyCodeDeployGroup:
+    Type: "AWS::CodeDeploy::DeploymentGroup"
+    Properties:
+      ApplicationName: !Ref MyCodeDeployApp
+      DeploymentGroupName: MyDeploymentGroup
+      DeploymentConfigName: CodeDeployDefault.OneAtATime  #
+      ServiceRoleArn: !GetAtt MyCodeDeployRole.Arn
+      Ec2TagFilters:
+        - Key: "Project"
+          Value: "Training"
+          Type: "KEY_AND_VALUE"
+        - Key: "Training"
+          Value: "CodeDeploySample"
+          Type: "KEY_AND_VALUE"
+
+  MyCodeDeployRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: MyCodeDeployRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codedeploy.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole"
+
+Outputs:
+  InstanceId:
+    Value: !Ref MyInstance
+    Description: Instance Id of the newly created EC2 instance
+  PublicIP:
+    Value: !GetAtt MyInstance.PublicIp
+    Description: Public IP address of the newly created EC2 instance
+  CodeDeployApp:
+    Value: !Ref MyCodeDeployApp
+    Description: CodeDeploy Application Name
+  CodeDeployGroup:
+    Value: !Ref MyCodeDeployGroup
+    Description: CodeDeploy Deployment Group Name
